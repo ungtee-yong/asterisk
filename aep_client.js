@@ -1,7 +1,7 @@
 const net = require('net');
 const EventEmitter = require('events');
-const Database = require('./config/database');
-const GoogleSpeechService = require('./config/google_speech');
+const Database = require('./database');
+const GoogleSpeechService = require('./google_speech');
 
 class AEPClient extends EventEmitter {
     constructor(asteriskHost = '127.0.0.1', asteriskPort = 4573) {
@@ -14,7 +14,7 @@ class AEPClient extends EventEmitter {
         this.channels = new Map();
         this.database = new Database();
         this.speechService = new GoogleSpeechService();
-        this.reconnectInterval = 5000; // 5 seconds
+        this.reconnectInterval = 5000;
         this.maxReconnectAttempts = 10;
         this.reconnectAttempts = 0;
     }

@@ -1,10 +1,7 @@
 const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
 const winston = require('winston');
 const AEPClient = require('./aep_client');
-const CallHandlers = require('./call_handlers');
-const Database = require('./config/database');
+const Database = require('./database');
 
 // Configure logging
 const logger = winston.createLogger({
@@ -14,10 +11,8 @@ const logger = winston.createLogger({
         winston.format.errors({ stack: true }),
         winston.format.json()
     ),
-    defaultMeta: { service: 'callcenter-aep-client' },
+    defaultMeta: { service: 'asterisk-aep-client' },
     transports: [
-        new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
-        new winston.transports.File({ filename: 'logs/combined.log' }),
         new winston.transports.Console({
             format: winston.format.combine(
                 winston.format.colorize(),
@@ -32,23 +27,10 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 // Middleware
-app.use(helmet());
-app.use(cors());
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Request logging
-app.use((req, res, next) => {
-    logger.info(`${req.method} ${req.path}`, {
-        ip: req.ip,
-        userAgent: req.get('User-Agent')
-    });
-    next();
-});
 
 // Initialize components
 const database = new Database();
-const callHandlers = new CallHandlers();
 const aepClient = new AEPClient(
     process.env.ASTERISK_HOST || '127.0.0.1',
     parseInt(process.env.ASTERISK_AEP_PORT) || 4573
@@ -81,32 +63,9 @@ aepClient.on('maxReconnectAttemptsReached', () => {
     process.exit(1);
 });
 
-// Call handlers event handlers
-callHandlers.on('transferCall', (data) => {
-    logger.info(`Transferring call ${data.channelId} to extension ${data.extension}`);
-    aepClient.sendMessage(`DIAL|${data.channelId}|${data.extension}`);
-});
-
-callHandlers.on('playAudio', (data) => {
-    logger.info(`Playing audio ${data.filename} on channel ${data.channelId}`);
-    aepClient.sendMessage(`PLAY|${data.channelId}|${data.filename}`);
-});
-
-callHandlers.on('recordAudio', (data) => {
-    logger.info(`Recording audio ${data.filename} on channel ${data.channelId}`);
-    aepClient.sendMessage(`RECORD|${data.channelId}|${data.filename}|${data.duration}|${data.silence}`);
-});
-
-// Override AEP client's handleIncomingCall to use our call handlers
-aepClient.handleIncomingCall = async function(params) {
-    const [channelId, callerId, calledNumber, context] = params;
-    await callHandlers.handleIncomingCall(channelId, callerId, calledNumber, context);
-};
-
 // Health check endpoint
 app.get('/health', async (req, res) => {
     try {
-        const stats = callHandlers.getCallStats();
         res.json({
             status: 'healthy',
             timestamp: new Date().toISOString(),
@@ -114,8 +73,7 @@ app.get('/health', async (req, res) => {
                 connected: aepClient.connected,
                 authenticated: aepClient.authenticated
             },
-            calls: stats,
-            database: 'connected'
+            channels: aepClient.channels.size
         });
     } catch (error) {
         logger.error('Health check failed:', error);
@@ -130,7 +88,7 @@ app.get('/health', async (req, res) => {
 // API endpoints
 app.get('/api/calls', (req, res) => {
     try {
-        const activeCalls = callHandlers.getActiveCalls();
+        const activeCalls = Array.from(aepClient.channels.values());
         res.json({
             success: true,
             data: activeCalls
@@ -143,7 +101,14 @@ app.get('/api/calls', (req, res) => {
 
 app.get('/api/stats', (req, res) => {
     try {
-        const stats = callHandlers.getCallStats();
+        const calls = Array.from(aepClient.channels.values());
+        const stats = {
+            totalCalls: calls.length,
+            activeCalls: calls.filter(call => call.status === 'ringing' || call.status === 'answered').length,
+            transferredCalls: calls.filter(call => call.status === 'transferred').length,
+            failedCalls: calls.filter(call => call.status === 'failed').length
+        };
+        
         res.json({
             success: true,
             data: stats
@@ -154,49 +119,17 @@ app.get('/api/stats', (req, res) => {
     }
 });
 
-app.get('/api/branches', async (req, res) => {
-    try {
-        // This would need to be implemented in Database class
-        res.json({ 
-            success: true,
-            message: 'Branches endpoint - to be implemented',
-            data: []
-        });
-    } catch (error) {
-        logger.error('Error fetching branches:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
+app.get('/api/aep/status', (req, res) => {
+    res.json({
+        success: true,
+        data: {
+            connected: aepClient.connected,
+            authenticated: aepClient.authenticated,
+            channels: aepClient.channels.size
+        }
+    });
 });
 
-app.get('/api/call-logs', async (req, res) => {
-    try {
-        // This would need to be implemented in Database class
-        res.json({ 
-            success: true,
-            message: 'Call logs endpoint - to be implemented',
-            data: []
-        });
-    } catch (error) {
-        logger.error('Error fetching call logs:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-app.post('/api/call-logs', async (req, res) => {
-    try {
-        const callData = req.body;
-        const result = await database.logCall(callData);
-        res.json({ 
-            success: result,
-            message: result ? 'Call logged successfully' : 'Failed to log call'
-        });
-    } catch (error) {
-        logger.error('Error logging call:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// AEP control endpoints
 app.post('/api/aep/connect', async (req, res) => {
     try {
         if (aepClient.connected) {
@@ -222,17 +155,6 @@ app.post('/api/aep/disconnect', (req, res) => {
     }
 });
 
-app.get('/api/aep/status', (req, res) => {
-    res.json({
-        success: true,
-        data: {
-            connected: aepClient.connected,
-            authenticated: aepClient.authenticated,
-            channels: aepClient.channels.size
-        }
-    });
-});
-
 // Error handling middleware
 app.use((error, req, res, next) => {
     logger.error('Unhandled error:', error);
@@ -246,7 +168,7 @@ app.use((req, res) => {
 
 // Start HTTP server
 const server = app.listen(port, () => {
-    logger.info(`Call Center AEP Client API server running on port ${port}`);
+    logger.info(`Asterisk AEP Client running on port ${port}`);
 });
 
 // Connect to Asterisk AEP
