@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: callcenter-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: callcenter
+      MYSQL_USER: callcenter_user
+      MYSQL_PASSWORD: callcenter_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    networks:
+      - callcenter-network
+
+  aep-client:
+    build:
+      context: .
+      dockerfile: Dockerfile.aep
+    container_name: callcenter-aep-client
+    ports:
+      - "3000:3000"  # HTTP API
+    volumes:
+      - ./config:/workspace/config
+      - ./database:/workspace/database
+      - ./logs:/workspace/logs
+      - ./service-account-key.json:/workspace/service-account-key.json
+    environment:
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=callcenter
+      - DB_USER=callcenter_user
+      - DB_PASSWORD=callcenter_password
+      - GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account-key.json
+      - NODE_ENV=production
+      - PORT=3000
+      - ASTERISK_HOST=host.docker.internal
+      - ASTERISK_AEP_PORT=4573
+      - AEP_SECRET=aeap_secret_key_123
+    depends_on:
+      - mysql
+    networks:
+      - callcenter-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+
+networks:
+  callcenter-network:
+    driver: bridge

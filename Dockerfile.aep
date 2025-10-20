@@ -1,0 +1,49 @@
+FROM node:18-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    libmysqlclient-dev \
+    pkg-config \
+    netcat-openbsd \
+    telnet \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /workspace
+
+# Copy package files
+COPY package*.json ./
+
+# Install Node.js dependencies
+RUN npm ci --only=production
+
+# Copy application code
+COPY config/ ./config/
+COPY database/ ./database/
+COPY test/ ./test/
+COPY *.js ./
+
+# Create logs directory
+RUN mkdir -p logs
+
+# Set permissions
+RUN chmod +x *.js
+RUN chmod +x test/*.js
+
+# Create non-root user
+RUN useradd -m -u 1000 callcenter && \
+    chown -R callcenter:callcenter /workspace
+
+USER callcenter
+
+# Expose ports
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3000/health || exit 1
+
+# Default command
+CMD ["node", "index.js"]

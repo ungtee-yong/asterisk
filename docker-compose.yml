@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: callcenter-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: callcenter
+      MYSQL_USER: callcenter_user
+      MYSQL_PASSWORD: callcenter_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    networks:
+      - callcenter-network
+
+  asterisk:
+    image: andrius/asterisk:18-current
+    container_name: callcenter-asterisk
+    ports:
+      - "5060:5060/udp"  # SIP
+      - "10000-20000:10000-20000/udp"  # RTP
+      - "5038:5038"  # AMI
+    volumes:
+      - ./asterisk:/etc/asterisk
+      - ./agi_scripts:/var/lib/asterisk/agi-bin
+      - ./config:/workspace/config
+      - ./database:/workspace/database
+      - asterisk_sounds:/var/lib/asterisk/sounds
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account-key.json
+    depends_on:
+      - mysql
+    networks:
+      - callcenter-network
+    restart: unless-stopped
+
+  app:
+    build: .
+    container_name: callcenter-app
+    ports:
+      - "3000:3000"  # HTTP API
+      - "4573:4573"  # AEP Server
+    volumes:
+      - ./config:/workspace/config
+      - ./database:/workspace/database
+      - ./agi_scripts:/workspace/agi_scripts
+      - ./logs:/workspace/logs
+    environment:
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=callcenter
+      - DB_USER=callcenter_user
+      - DB_PASSWORD=callcenter_password
+      - GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account-key.json
+      - NODE_ENV=production
+      - PORT=3000
+    depends_on:
+      - mysql
+    networks:
+      - callcenter-network
+    command: ["node", "index.js"]
+
+volumes:
+  mysql_data:
+  asterisk_sounds:
+
+networks:
+  callcenter-network:
+    driver: bridge
