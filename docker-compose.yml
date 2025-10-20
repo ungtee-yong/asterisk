@@ -41,10 +41,14 @@ services:
   app:
     build: .
     container_name: callcenter-app
+    ports:
+      - "3000:3000"  # HTTP API
+      - "4573:4573"  # AEP Server
     volumes:
       - ./config:/workspace/config
       - ./database:/workspace/database
       - ./agi_scripts:/workspace/agi_scripts
+      - ./logs:/workspace/logs
     environment:
       - DB_HOST=mysql
       - DB_PORT=3306
@@ -52,10 +56,13 @@ services:
       - DB_USER=callcenter_user
       - DB_PASSWORD=callcenter_password
       - GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account-key.json
+      - NODE_ENV=production
+      - PORT=3000
     depends_on:
       - mysql
     networks:
       - callcenter-network
+    command: ["node", "index.js"]
 
 volumes:
   mysql_data:

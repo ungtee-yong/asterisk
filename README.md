@@ -1,6 +1,6 @@
-# Asterisk Call Center with Google Speech Integration
+# Asterisk Call Center with Google Speech Integration (Node.js + AEP)
 
-ระบบ Call Center ที่ใช้ Asterisk เชื่อมต่อกับ Google Speech-to-Text และ Text-to-Speech เพื่อทำการ routing สายโทรศัพท์ตามสาขาที่ลูกค้าต้องการติดต่อ
+ระบบ Call Center ที่ใช้ Asterisk เชื่อมต่อกับ Google Speech-to-Text และ Text-to-Speech เพื่อทำการ routing สายโทรศัพท์ตามสาขาที่ลูกค้าต้องการติดต่อ โดยใช้ Node.js และ AEP (Asterisk External Protocol)
 
 ## 🎯 ภาพรวมระบบ
 
@@ -10,6 +10,14 @@
 3. ระบบยืนยัน → "คุณต้องการติดต่อสาขา...ใช่หรือไม่"
 4. ลูกค้าตอบ "ใช่" → ระบบค้นหาหมายเลขภายในและโอนสาย
 5. ลูกค้าตอบ "ไม่ใช่" → ระบบถามใหม่
+
+## 🚀 เทคโนโลยีที่ใช้
+
+- **Node.js** - Runtime สำหรับ JavaScript
+- **AEP (Asterisk External Protocol)** - การเชื่อมต่อระหว่าง Asterisk กับแอปพลิเคชันภายนอก
+- **Google Cloud Speech API** - Speech-to-Text และ Text-to-Speech
+- **MySQL** - ฐานข้อมูลสำหรับเก็บข้อมูลสาขา
+- **Asterisk PBX** - ระบบโทรศัพท์
 
 ## คุณสมบัติ
 
@@ -34,9 +42,9 @@
 ### ข้อกำหนดระบบ
 
 - Ubuntu/Debian Linux
-- Python 3.7+
+- Node.js 16.0+
 - MySQL/MariaDB
-- Asterisk PBX
+- Asterisk PBX with AEP support
 - Google Cloud Platform account
 
 ### ขั้นตอนการติดตั้ง
@@ -49,7 +57,7 @@ cd asterisk-callcenter
 
 2. **รันสคริปต์ติดตั้ง**
 ```bash
-sudo ./install.sh
+sudo ./install_nodejs.sh
 ```
 
 3. **ตั้งค่า Google Cloud**
@@ -71,7 +79,8 @@ python3 database/init_db.py
 5. **รีสตาร์ทเซอร์วิส**
 ```bash
 sudo systemctl restart asterisk
-sudo systemctl restart callcenter-agi
+sudo systemctl restart callcenter-nodejs
+sudo systemctl restart callcenter-aep
 ```
 
 ## การตั้งค่า
@@ -106,36 +115,67 @@ VALUES ('New Branch', 'สาขาใหม่', '110', '02-999-9999', 'ที�
 ```
 asterisk-callcenter/
 ├── agi_scripts/
-│   └── call_routing.py          # AGI script หลัก
+│   └── call_routing.js          # Node.js AGI script
 ├── asterisk/
 │   ├── extensions.conf          # Asterisk dialplan
 │   ├── sip.conf                 # SIP configuration
 │   ├── manager.conf             # AMI configuration
-│   └── modules.conf             # Module configuration
+│   ├── modules.conf             # Module configuration
+│   └── aeap.conf                # AEP configuration
 ├── config/
-│   ├── google_speech.py         # Google Speech API integration
-│   └── database.py              # Database connection
+│   ├── google_speech.js         # Google Speech API integration
+│   └── database.js              # Database connection
 ├── database/
 │   ├── schema.sql               # Database schema
-│   └── init_db.py               # Database initialization
-├── requirements.txt             # Python dependencies
+│   └── init_db.js               # Database initialization
+├── test/
+│   └── test_system.js           # System test script
+├── package.json                 # Node.js dependencies
+├── index.js                     # Main HTTP API server
+├── aep_server.js                # AEP server
 ├── .env.example                 # Environment variables template
-├── install.sh                   # Installation script
+├── install_nodejs.sh            # Installation script
 └── README.md                    # Documentation
 ```
 
 ## การทดสอบ
 
+### ทดสอบระบบทั้งหมด
+
+```bash
+npm test
+```
+
 ### ทดสอบการเชื่อมต่อฐานข้อมูล
 
 ```bash
-python3 -c "from config.database import Database; db = Database(); print(db.get_branch_extension('กรุงเทพ'))"
+node -e "const Database = require('./config/database'); const db = new Database(); db.getBranchExtension('กรุงเทพ').then(console.log)"
 ```
 
 ### ทดสอบ Google Speech API
 
 ```bash
-python3 -c "from config.google_speech import GoogleSpeechService; gs = GoogleSpeechService(); print(gs.text_to_speech('สวัสดีครับ'))"
+node -e "const GoogleSpeechService = require('./config/google_speech'); const gs = new GoogleSpeechService(); gs.textToSpeech('สวัสดีครับ').then(console.log)"
+```
+
+### ทดสอบ AEP Server
+
+```bash
+# เริ่ม AEP Server
+node aep_server.js
+
+# ทดสอบการเชื่อมต่อ
+telnet localhost 4573
+```
+
+### ทดสอบ HTTP API
+
+```bash
+# เริ่ม HTTP API Server
+node index.js
+
+# ทดสอบ Health Check
+curl http://localhost:3000/health
 ```
 
 ### ทดสอบการโทร
@@ -154,18 +194,21 @@ python3 -c "from config.google_speech import GoogleSpeechService; gs = GoogleSpe
 # Asterisk logs
 tail -f /var/log/asterisk/full
 
-# AGI script logs
-tail -f /var/log/asterisk/callcenter/agi.log
+# Node.js application logs
+tail -f logs/combined.log
+tail -f logs/error.log
 
 # System logs
-journalctl -u callcenter-agi -f
+journalctl -u callcenter-nodejs -f
+journalctl -u callcenter-aep -f
 ```
 
 ### ปัญหาที่พบบ่อย
 
 1. **AGI script ไม่ทำงาน**
-   - ตรวจสอบ permissions: `chmod +x /var/lib/asterisk/agi-bin/call_routing.py`
-   - ตรวจสอบ Python path ใน AGI script
+   - ตรวจสอบ permissions: `chmod +x /var/lib/asterisk/agi-bin/call_routing.js`
+   - ตรวจสอบ Node.js path ใน AGI script
+   - ตรวจสอบ AEP server: `systemctl status callcenter-aep`
 
 2. **Google Speech API ไม่ทำงาน**
    - ตรวจสอบ GOOGLE_APPLICATION_CREDENTIALS
@@ -174,6 +217,11 @@ journalctl -u callcenter-agi -f
 3. **ฐานข้อมูลเชื่อมต่อไม่ได้**
    - ตรวจสอบการตั้งค่าใน .env
    - ตรวจสอบ MySQL service: `systemctl status mysql`
+
+4. **AEP Server ไม่ทำงาน**
+   - ตรวจสอบ port 4573: `netstat -tlnp | grep 4573`
+   - ตรวจสอบ AEP service: `systemctl status callcenter-aep`
+   - ตรวจสอบ aeap.conf configuration
 
 ## การพัฒนาต่อ
 
